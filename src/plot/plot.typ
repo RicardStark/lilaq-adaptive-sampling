@@ -1,4 +1,5 @@
 #import "../algorithm/bezier-interpolation.typ": bezier-splines
+#import "../algorithm/combined-sampling.typ"
 #import "../logic/limits.typ": plot-lim
 #import "../process-styles.typ": merge-strokes, merge-fills
 #import "../assertations.typ"
@@ -480,6 +481,10 @@
   /// -> function
   f,
 
+  /// Sampling method to use, between uniform and adaptive.
+  /// -> str
+  sampling-method: "uniform",
+
   /// Number of uniformly spaced points at which to evaluate @plot-function.f.
   /// -> int
   samples: 200,
@@ -502,17 +507,57 @@
     message: "plot-function: domain values must be numbers",
   )
   assert(
+    type(sampling-method) == str,
+    message: "plot-function: sampling method must be a string"
+  )
+  assert(
+    sampling-method == "uniform" or sampling-method == "adaptive",
+    message: "plot-function: sampling method must be 'uniform' or 'adaptive.'"
+  )
+  assert(
     type(samples) == int and samples >= 2,
     message: "plot-function: samples must be an integer greater than one",
   )
 
   let (start, end) = domain
-  plot.with(
-    mark: none,
-    smooth: true,
-  )(
-    linspace(start, end, num: samples),
-    f,
-    ..args,
-  )
+
+  if sampling-method == "uniform" {
+    plot.with(
+      mark: none,
+      smooth: true,
+    )(
+      linspace(start, end, num: samples),
+      f,
+      ..args,
+    )
+  } else if sampling-method == "adaptive" {
+    // Initialize x and y arrays for polygonal approximation of f
+    xs = ()
+    ys = ()
+
+    // Get polygonal approximation of f
+    let polylines = cs-stack(f, domain)
+
+    // Fill xs and ys
+    for polyline in polylines {
+      for (x, y) in poly {
+        xs.push(x)
+        ys.push(y)
+      }
+      // To handle lq.plot not trying to connect two polylines across an infinite singularity or jump discontinuity, we attach float.nan's to the end of each polyline, minus the last one
+      if poly != polylines.last() {
+        xs.push(float.nan)
+        ys.push(float.nan)
+      }
+    }
+
+    plot.with(
+      mark: none,
+      smooth: true,
+    )(
+      xs,
+      ys,
+      ..args
+    )
+  }
 }
