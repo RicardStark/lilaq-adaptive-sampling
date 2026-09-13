@@ -545,7 +545,7 @@
         ys.push(y)
       }
       // To handle lq.plot not trying to connect two polylines across an infinite singularity or jump discontinuity, we attach float.nan's to the end of each polyline, minus the last one
-      if poly != polylines.last() {
+      if polyline != polylines.last() {
         xs.push(float.nan)
         ys.push(float.nan)
       }

@@ -1,3 +1,5 @@
+#import "../vec.typ" as vec
+
 // This file implements the combined uniform/adaptive sampling from the paper:
 // 
 // @article{combinedSampling,
@@ -179,16 +181,21 @@
   let p1 = points.at(1)
   let p2 = points.at(2)
 
-  let u = (p2.at(0) - p1.at(0), p2.at(1) - p1.at(1))
-  let v = (p0.at(0) - p1.at(0), p0.at(1) - p1.at(1))
+  let u = vec.subtract(p2, p1)
+  let v = vec.subtract(p0, p1)
 
-  let dot = u.at(0) * v.at(0) + u.at(1) * v.at(1)
-  let norm-u = calc.sqrt(calc.pow(u.at(0), 2) + calc.pow(u.at(1), 2))
-  let norm-v = calc.sqrt(calc.pow(v.at(0), 2) + calc.pow(v.at(1), 2))
+  let dot = vec.inner(u, v)
+  let norm-u = calc.sqrt(vec.inner(u, u))
+  let norm-v = calc.sqrt(vec.inner(v, v))
 
-  let angle = calc.acos(calc.abs(dot/(norm-u * norm-v)))
+  // Protect against 0 denominator
+  if norm-u * norm-v <= 0 {return false}
 
-  return angle > angle-tol
+  let cosine = calc.abs(dot) / (norm-u * norm-v)
+  // Protect against floating point values going beyond [-1, 1]
+  let cosine = if cosine > 1 { 1 } else if cosine < -1 { -1 } else { cosine }
+
+  return calc.acos(cosine) > angle-tol
 }
 
 /// Recursive combined-sampling routine used inside cs-init. This is the paper's Algorithm 2 on page 14.
@@ -489,7 +496,8 @@
   }
 
   // if the combined sampling returns a complete polyline, add the endpoint of the interval last
-  let polyline-final = polyline-state.points.push((b, b-state.fc))
+  let polyline-final = polyline-state.points
+  polyline-final.push((b, b-state.fc))
 
   return (status: "ok", points: polyline-final)
 }
@@ -513,7 +521,7 @@
   /// Minimum required recursion depth.
   /// 
   /// -> int
-  depth-min: 0,
+  depth-min: 1,
   /// Maximum allowed recursion depth.
   /// 
   /// -> int
@@ -572,3 +580,8 @@
 
   return polyline-list
 }
+
+#cs-stack(
+  x => calc.sin(x),
+  (-calc.pi, calc.pi),
+)
