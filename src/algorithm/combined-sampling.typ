@@ -98,11 +98,15 @@
   let f-r = 3*f-values.at(2) - 4*f-values.at(3) + f-values.at(4)
   let f-l = 3*f-values.at(2) - 4*f-values.at(1) + f-values.at(0)
 
-  // and then the LR(x) = |f_r^2 - f_l^2|/|f_r^2 + f_l^2| term
-  let LR = calc.abs(calc.pow(f-r, 2) - calc.pow(f-l, 2))/calc.abs(calc.pow(f-r, 2) + calc.pow(f-l, 2))
+  // and then the numerator |f_r^2 - f_l^2|
+  let numer = calc.abs(calc.pow(f-r, 2) - calc.pow(f-l, 2))
 
-  // If LR > lr-tol, then the function is probably not smooth at x
-  if LR > lr-tol {
+  // and denominator |f_r^2 + f_l^2 + 1e-4|
+  // Annoyingly, the paper doesn't actually explain it's using the 1e-4 as a stabilizer for 0 denominator cases.
+  let denom = calc.abs(calc.pow(f-r, 2) + calc.pow(f-l, 2) + 1e-4)
+
+  // If LR = numer/denom > lr-tol, then the function is probably not smooth at x
+  if numer/denom > lr-tol {
     return (status: "singular", c: x)
   } else {
     return (status: "ok", c: x, fc: f-values.at(2))
@@ -274,9 +278,9 @@
     return (status: "ok", points: polyline)
   }
 
-  let (r1, r2, r3) = suiji.uniform-f(rng, low: 0.45, high: 0.55, size: 3).at(1)
+  let (r0, r1, r2) = suiji.uniform-f(rng, low: 0.45, high: 0.55, size: 3).at(1)
 
-  let x0 = a + 0.5*r1*(b - a)
+  let x0 = a + 0.5*r0*(b - a)
 
   let x0-state = detect-singularity(f, x0, inf-tol, eps, lr-tol)
 
@@ -284,7 +288,7 @@
     return x0-state
   }
 
-  let x1 = a + r2*(b - a)
+  let x1 = a + r1*(b - a)
 
   let x1-state = detect-singularity(f, x1, inf-tol, eps, lr-tol)
 
@@ -306,7 +310,7 @@
   // Compute angular deviation of (pa, p0, p1)
   let alpha0 = refinement-criterion((pa, p0, p1), angle-tol)
 
-  if alpha0 or (depth <= depth-max) {
+  if alpha0 or (depth < depth-min) {
     let child-state = cs(
       f,
       (a, x0),
@@ -335,7 +339,7 @@
   /// Compute angular deviation of (p0, p1, p2)
   let alpha1 = refinement-criterion((p0, p1, p2), angle-tol)
 
-  if alpha0 or alpha1 or (depth <= depth-max) {
+  if alpha0 or alpha1 or (depth < depth-min) {
     let child-state = cs(
       f,
       (x0, x1),
@@ -364,7 +368,7 @@
   /// Compute angular deviation of (p1, p2, pb)
   let alpha2 = refinement-criterion((p1, p2, pb), angle-tol)
 
-  if alpha1 or alpha2 or (depth <= depth-max) {
+  if alpha1 or alpha2 or (depth < depth-min) {
     let child-state = cs(
       f,
       (x1, x2),
@@ -390,7 +394,7 @@
 
   polyline.push(p2)
 
-  if alpha2 or (depth <= depth-max) {
+  if alpha2 or (depth < depth-min) {
     let child-state = cs(
       f,
       (x2, b),
@@ -521,15 +525,15 @@
   /// Minimum required recursion depth.
   /// 
   /// -> int
-  depth-min: 1,
+  depth-min: 0,
   /// Maximum allowed recursion depth.
   /// 
   /// -> int
-  depth-max: 3,
+  depth-max: 6,
   /// Minimum allowed interval half-width.
   /// 
   /// -> float
-  eps: 0.001,
+  eps: 0.0001,
   /// Lower bound tolerance for LR condition.
   /// 
   /// -> float
@@ -537,7 +541,7 @@
   /// Infinite singularity tolerance.
   /// 
   /// -> float
-  inf-tol: 1e6,
+  inf-tol: 1e5,
   /// Maximum allowed angular deviation.
   /// 
   /// -> float
@@ -580,8 +584,3 @@
 
   return polyline-list
 }
-
-#cs-stack(
-  x => calc.sin(x),
-  (-calc.pi, calc.pi),
-)
