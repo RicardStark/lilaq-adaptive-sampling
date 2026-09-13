@@ -31,29 +31,38 @@
 // SingularityResult = (status: "ok", points: Polyline) | (status: "singular", c: float)
 
 
-
-/// Tries to build a polygonal approximation for a function over a single interval.
+/// Helper function for checking for infinite singularities at a point
 ///
-/// This is the per-interval entry point corresponding to the paper's Algorithm 1, on page 13. It samples the interval, checks the geometric criterion, and either accepts the interval or signals a singularity that must be handled.
-/// 
+/// -> bool
+#let is-extreme-or-nonfinite(
+  /// The value to test for being an infinite singularity.
+  /// 
+  /// -> float
+  value,
+  /// The lower bound tolerance for the infinite singularity.
+  /// 
+  /// -> float
+  inf-tol
+) = {
+  return calc.abs(value) > inf-tol or float.is-infinite(value) or float.is-nan(value)
+}
+
+/// Unified discontinuity detector. It will check for infinite singularities and call the LR criterion to check for non-smooth behavior.
+///
 /// -> dictionary
-#let cs-init(
+#let detect-singularity(
   /// Function being tested for singularities.
   /// 
-  /// -> function
+  /// -> function: float -> float
   f,
-  /// Interval to interpolate the function `f` on.
+  /// Central point to test for singularity.
   /// 
-  /// -> array
-  interval,
-  /// Minimum required recursion depth.
+  /// -> float
+  x,
+  /// Infinite singularity tolerance.
   /// 
-  /// -> int
-  depth-min,
-  /// Maximum allowed recursion depth.
-  /// 
-  /// -> int
-  depth-max,
+  /// -> float
+  inf-tol,
   /// Minimum allowed interval half-width.
   /// 
   /// -> float
@@ -62,58 +71,124 @@
   /// 
   /// -> float
   lr-tol,
-  /// Infinite singularity tolerance.
+) = {
+  // We make an empty array to store the different stencil values f(x - eps), f(x - eps/2), ... to avoid recomputation. It starts as empty since they will be computed in the infinite singularity test loop, and will only be relevant if no infinite singularity is found
+  let f-values = ()
+
+  // We begin checking for infinite singularities
+  for k in (-2, -1, 0, 1, 2) {
+    let v = f(x + k * eps/2)
+    if is-extreme-or-nonfinite(v, inf-tol) {
+      return (status: "singular", c: x)
+    }
+      
+    // If no singularity is found, store v to the f-values array for later use
+    f-values.push(v)
+  }
+
+  ////////////////////////////////
+  // Here, we now compute the LR score and test the LR criterion
+  ////////////////////////////////
+  
+  // We compute the local terms
+  // f_(r) = 3 f(x) - 4 f(x + eps/2) + f(x + eps) and
+  // f_(l) = 3 f(x) - 4 f(x + eps/2) + f(x + eps)
+  let f-r = 3*f-values.at(2) - 4*f-values.at(3) + f-values.at(4)
+  let f-l = 3*f-values.at(2) - 4*f-values.at(1) + f-values.at(0)
+
+  // and then the LR(x) = |f_r^2 - f_l^2|/|f_r^2 + f_l^2| term
+  let LR = calc.abs(calc.pow(f-r, 2) - calc.pow(f-l, 2))/calc.abs(calc.pow(f-r, 2) + calc.pow(f-l, 2))
+
+  // If LR > lr-tol, then the function is probably not smooth at x
+  if LR > lr-tol {
+    return (status: "singular", c: x)
+  } else {
+    return (status: "ok", c: x, fc: f-values.at(2))
+  }
+}
+
+/// Handles a singular interval by locating the discontinuity and either
+/// 1. shifting the bounds of the interval if the singularity is close to the edges, or
+/// 2. splitting the interval at the singularity if it is in the interior of the interval.
+/// 
+/// This is Algorithm 4, on page 20, of the original paper.
+/// 
+/// -> array
+#let process-int(
+  /// The initial interval to process.
+  /// 
+  /// -> array
+  interval,
+  /// The location of the singularity.
   /// 
   /// -> float
-  inf-tol,
+  c,
+  /// Minimum allowed interval half-width.
+  /// 
+  /// -> float
+  eps,
+) = {
+  let (a, b) = interval
+
+  // 1. Invalid interval
+  if a > b {
+    return ()
+  }
+
+  // 2. "Empty" interval: if the interval is too small, below tolerance, it is simply dropped
+  if calc.abs(b - a) < eps {
+    return ()
+  }
+
+  // 3. Singular point near the lower bound: shift the lower bound upward
+  if a <= c and calc.abs(c - a) <= eps {
+    return ((a + eps, b),)
+  }
+
+  // 4. Singular point near the upper bound: shift the upper bound downward
+  if c <= b and calc.abs(c - b) <= eps {
+    return ((a, b - eps),)
+  }
+
+  // 5. Singular point strictly inside the interval: split into two children
+  if a < c and c < b and calc.abs(c - a) > eps and calc.abs(c - b) > eps {
+    let left = (a, c - eps)
+    let right = (c + eps, b)
+
+    return (left, right)
+  }
+}
+
+/// Geometric refinement criterion for accepting a segment.
+///
+/// Returns true if the polygonal approximation is sufficiently rough compared to the angular tolerance angle-tol to need more refinement.
+///
+/// -> bool
+#let refinement-criterion(
+  /// The triplet of points to be tested.
+  /// 
+  /// -> array
+  points,
   /// Maximum allowed angular deviation.
   /// 
   /// -> float
   angle-tol,
 ) = {
-  let (a, b) = interval
+  // Paper states acos ± π, but the latter is only needed if one wants to know rotation direction, which isn't important here, so we just set it to acos
+  let p0 = points.at(0)
+  let p1 = points.at(1)
+  let p2 = points.at(2)
 
-  // Test if singularity is at or near interval bounds
-  let a-state = detect-singularity(f, a, inf-tol, eps, lr-tol)
+  let u = (p2.at(0) - p1.at(0), p2.at(1) - p1.at(1))
+  let v = (p0.at(0) - p1.at(0), p0.at(1) - p1.at(1))
 
-  if a-state.status == "singular" {
-    return a-state
-  }
+  let dot = u.at(0) * v.at(0) + u.at(1) * v.at(1)
+  let norm-u = calc.sqrt(calc.pow(u.at(0), 2) + calc.pow(u.at(1), 2))
+  let norm-v = calc.sqrt(calc.pow(v.at(0), 2) + calc.pow(v.at(1), 2))
 
-  let b-state = detect-singularity(f, b, inf-tol, eps, lr-tol)
+  let angle = calc.acos(calc.abs(dot/(norm-u * norm-v)))
 
-  if b-state.status == "singular" {
-    return b-state
-  }
-
-  // initialize the Polyline object
-  let polyline = ((a, a-state.fc),)
-
-  // Process the interval through combined sampling to either return the full polyline, or another singularity point for processing
-  let polyline-state = cs(
-    f,
-    interval,
-    a-state.fc,
-    b-state.fc,
-    polyline,
-    1,
-    depth-min,
-    depth-max,
-    eps,
-    lr-tol,
-    inf-tol,
-    angle-tol,
-  )
-
-  // if the combined sampling returns a singularity point, return the singularity state for feeding into process-int
-  if polyline-state.status == "singular" {
-    return polyline-state
-  }
-
-  // if the combined sampling returns a complete polyline, add the endpoint of the interval last
-  let polyline-final = polyline-state.points.push((b, b-state.fc))
-
-  return (status: "ok", points: polyline-final)
+  return angle > angle-tol
 }
 
 /// Recursive combined-sampling routine used inside cs-init. This is the paper's Algorithm 2 on page 14.
@@ -335,6 +410,90 @@
   return (status: "ok", points: polyline)
 }
 
+/// Tries to build a polygonal approximation for a function over a single interval.
+///
+/// This is the per-interval entry point corresponding to the paper's Algorithm 1, on page 13. It samples the interval, checks the geometric criterion, and either accepts the interval or signals a singularity that must be handled.
+/// 
+/// -> dictionary
+#let cs-init(
+  /// Function being tested for singularities.
+  /// 
+  /// -> function
+  f,
+  /// Interval to interpolate the function `f` on.
+  /// 
+  /// -> array
+  interval,
+  /// Minimum required recursion depth.
+  /// 
+  /// -> int
+  depth-min,
+  /// Maximum allowed recursion depth.
+  /// 
+  /// -> int
+  depth-max,
+  /// Minimum allowed interval half-width.
+  /// 
+  /// -> float
+  eps,
+  /// Lower bound tolerance for LR condition.
+  /// 
+  /// -> float
+  lr-tol,
+  /// Infinite singularity tolerance.
+  /// 
+  /// -> float
+  inf-tol,
+  /// Maximum allowed angular deviation.
+  /// 
+  /// -> float
+  angle-tol,
+) = {
+  let (a, b) = interval
+
+  // Test if singularity is at or near interval bounds
+  let a-state = detect-singularity(f, a, inf-tol, eps, lr-tol)
+
+  if a-state.status == "singular" {
+    return a-state
+  }
+
+  let b-state = detect-singularity(f, b, inf-tol, eps, lr-tol)
+
+  if b-state.status == "singular" {
+    return b-state
+  }
+
+  // initialize the Polyline object
+  let polyline = ((a, a-state.fc),)
+
+  // Process the interval through combined sampling to either return the full polyline, or another singularity point for processing
+  let polyline-state = cs(
+    f,
+    interval,
+    a-state.fc,
+    b-state.fc,
+    polyline,
+    1,
+    depth-min,
+    depth-max,
+    eps,
+    lr-tol,
+    inf-tol,
+    angle-tol,
+  )
+
+  // if the combined sampling returns a singularity point, return the singularity state for feeding into process-int
+  if polyline-state.status == "singular" {
+    return polyline-state
+  }
+
+  // if the combined sampling returns a complete polyline, add the endpoint of the interval last
+  let polyline-final = polyline-state.points.push((b, b-state.fc))
+
+  return (status: "ok", points: polyline-final)
+}
+
 /// Computes a polygonal approximation for a function over an interval, including infinite singularities and non-smooth behavior. This is the paper's algorithm 3 on page 18. Returns an array of Polylines.
 ///
 /// -> array
@@ -358,7 +517,7 @@
   /// Maximum allowed recursion depth.
   /// 
   /// -> int
-  depth-max: 7,
+  depth-max: 3,
   /// Minimum allowed interval half-width.
   /// 
   /// -> float
@@ -412,164 +571,4 @@
   }
 
   return polyline-list
-}
-
-/// Geometric refinement criterion for accepting a segment.
-///
-/// Returns true if the polygonal approximation is sufficiently rough compared to the angular tolerance angle-tol to need more refinement.
-///
-/// -> bool
-#let refinement-criterion(
-  /// The triplet of points to be tested.
-  /// 
-  /// -> array
-  points,
-  /// Maximum allowed angular deviation.
-  /// 
-  /// -> float
-  angle-tol,
-) = {
-  // Paper states acos ± π, but the latter is only needed if one wants to know rotation direction, which isn't important here, so we just set it to acos
-  let p0 = points.at(0)
-  let p1 = points.at(1)
-  let p2 = points.at(2)
-
-  let u = (p2.at(0) - p1.at(0), p2.at(1) - p1.at(1))
-  let v = (p0.at(0) - p1.at(0), p0.at(1) - p1.at(1))
-
-  let dot = u.at(0) * v.at(0) + u.at(1) * v.at(1)
-  let norm-u = calc.sqrt(calc.pow(u.at(0), 2) + calc.pow(u.at(1), 2))
-  let norm-v = calc.sqrt(calc.pow(v.at(0), 2) + calc.pow(v.at(1), 2))
-
-  let angle = calc.acos(calc.abs(dot/(norm-u * norm-v)))
-
-  return angle > angle-tol
-}
-
-/// Helper function for checking for infinite singularities at a point
-///
-/// -> bool
-#let is-extreme-or-nonfinite(
-  /// The value to test for being an infinite singularity.
-  /// 
-  /// -> float
-  value,
-  /// The lower bound tolerance for the infinite singularity.
-  /// 
-  /// -> float
-  inf-tol
-) = {
-  return calc.abs(value) > inf-tol or float.is-infinite(value) or float.is-nan(value)
-}
-
-/// Unified discontinuity detector. It will check for infinite singularities and call the LR criterion to check for non-smooth behavior.
-///
-/// -> dictionary
-#let detect-singularity(
-  /// Function being tested for singularities.
-  /// 
-  /// -> function: float -> float
-  f,
-  /// Central point to test for singularity.
-  /// 
-  /// -> float
-  x,
-  /// Infinite singularity tolerance.
-  /// 
-  /// -> float
-  inf-tol,
-  /// Minimum allowed interval half-width.
-  /// 
-  /// -> float
-  eps,
-  /// Lower bound tolerance for LR condition.
-  /// 
-  /// -> float
-  lr-tol,
-) = {
-  // We make an empty array to store the different stencil values f(x - eps), f(x - eps/2), ... to avoid recomputation. It starts as empty since they will be computed in the infinite singularity test loop, and will only be relevant if no infinite singularity is found
-  let f-values = ()
-
-  // We begin checking for infinite singularities
-  for k in (-2, -1, 0, 1, 2) {
-    let v = f(x + k * eps/2)
-    if is-extreme-or-nonfinite(v, inf-tol) {
-      return (status: "singular", c: x)
-    }
-      
-    // If no singularity is found, store v to the f-values array for later use
-    f-values.push(v)
-  }
-
-  ////////////////////////////////
-  // Here, we now compute the LR score and test the LR criterion
-  ////////////////////////////////
-  
-  // We compute the local terms
-  // f_(r) = 3 f(x) - 4 f(x + eps/2) + f(x + eps) and
-  // f_(l) = 3 f(x) - 4 f(x + eps/2) + f(x + eps)
-  f_r = 3*f-values.at(2) - 4*f-values.at(3) + f-values.at(4)
-  f_l = 3*f-values.at(2) - 4*f-values.at(1) + f-values.at(0)
-
-  // and then the LR(x) = |f_r^2 - f_l^2|/|f_r^2 + f_l^2| term
-  LR = calc.abs(calc.pow(f_r, 2) - calc.pow(f_l, 2))/calc.abs(calc.pow(f_r, 2) + calc.pow(f_l, 2))
-
-  // If LR > lr-tol, then the function is probably not smooth at x
-  if LR > lr-tol {
-    return (status: "singular", c: x)
-  } else {
-    return (status: "ok", c: x, fc: f-values.at(2))
-  }
-}
-
-/// Handles a singular interval by locating the discontinuity and either
-/// 1. shifting the bounds of the interval if the singularity is close to the edges, or
-/// 2. splitting the interval at the singularity if it is in the interior of the interval.
-/// 
-/// This is Algorithm 4, on page 20, of the original paper.
-/// 
-/// -> array
-#let process-int(
-  /// The initial interval to process.
-  /// 
-  /// -> array
-  interval,
-  /// The location of the singularity.
-  /// 
-  /// -> float
-  c,
-  /// Minimum allowed interval half-width.
-  /// 
-  /// -> float
-  eps,
-) = {
-  let (a, b) = interval
-
-  // 1. Invalid interval
-  if a > b {
-    return ()
-  }
-
-  // 2. "Empty" interval: if the interval is too small, below tolerance, it is simply dropped
-  if calc.abs(b - a) < eps {
-    return ()
-  }
-
-  // 3. Singular point near the lower bound: shift the lower bound upward
-  if a <= c and calc.abs(c - a) <= eps {
-    return ((a + eps, b),)
-  }
-
-  // 4. Singular point near the upper bound: shift the upper bound downward
-  if c <= b and calc.abs(c - b) <= eps {
-    return ((a, b - eps),)
-  }
-
-  // 5. Singular point strictly inside the interval: split into two children
-  if a < c and c < b and calc.abs(c - a) > eps and calc.abs(c - b) > eps {
-    let left = (a, c - eps)
-    let right = (c + eps, b)
-
-    return (left, right)
-  }
 }

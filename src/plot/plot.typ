@@ -1,5 +1,5 @@
 #import "../algorithm/bezier-interpolation.typ": bezier-splines
-#import "../algorithm/combined-sampling.typ"
+#import "../algorithm/combined-sampling.typ": cs-stack
 #import "../logic/limits.typ": plot-lim
 #import "../process-styles.typ": merge-strokes, merge-fills
 #import "../assertations.typ"
@@ -532,15 +532,15 @@
     )
   } else if sampling-method == "adaptive" {
     // Initialize x and y arrays for polygonal approximation of f
-    xs = ()
-    ys = ()
+    let xs = ()
+    let ys = ()
 
     // Get polygonal approximation of f
     let polylines = cs-stack(f, domain)
 
     // Fill xs and ys
     for polyline in polylines {
-      for (x, y) in poly {
+      for (x, y) in polyline {
         xs.push(x)
         ys.push(y)
       }
