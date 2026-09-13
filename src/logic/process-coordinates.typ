@@ -1,9 +1,9 @@
 
 /// Takes an array of points as input and filters all points where at least one
-/// coordinate is `calc.nan` to produce
+/// coordinate is `float.nan` to produce
 /// + a filtered copy of the input array
 /// + an array of consecutive "runs", i.e., all connected sequences from the input
-///   separated by points where one or more coordinates take the value `calc.nan`. 
+///   separated by points where one or more coordinates take the value `float.nan`. 
 /// 
 /// -> array
 #let filter-nan-points(
