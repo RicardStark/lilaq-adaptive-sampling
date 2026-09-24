@@ -521,7 +521,7 @@
   /// Maximum split depth allowed for handling singularity behavior.
   /// 
   /// -> int
-  max-splits: 20,
+  max-splits: 5000,
   /// Minimum required recursion depth.
   /// 
   /// -> int
@@ -529,11 +529,11 @@
   /// Maximum allowed recursion depth.
   /// 
   /// -> int
-  depth-max: 6,
+  depth-max: 50,
   /// Minimum allowed interval half-width.
   /// 
   /// -> float
-  eps: 0.0001,
+  eps: 0.001,
   /// Lower bound tolerance for LR condition.
   /// 
   /// -> float
@@ -541,11 +541,11 @@
   /// Infinite singularity tolerance.
   /// 
   /// -> float
-  inf-tol: 1e5,
+  inf-tol: 100,
   /// Maximum allowed angular deviation.
   /// 
   /// -> float
-  angle-tol: 1deg,
+  angle-tol: 0.4deg,
 ) = {
   // stack for tracking intervals that must be processed
   let stack = (interval,)
